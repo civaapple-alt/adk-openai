@@ -1,25 +1,37 @@
 # adk-openai
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/civaapple-alt/adk-openai.svg)](https://pkg.go.dev/github.com/civaapple-alt/adk-openai)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-ADK Go (`google.golang.org/adk/v2`) 的 OpenAI 兼容 `model.LLM` 实现。
+[English](README.md) | [简体中文](README.zh_CN.md)
 
-基于官方 [`github.com/openai/openai-go/v3`](https://github.com/openai/openai-go)，支持：
+OpenAI-compatible [`model.LLM`](https://pkg.go.dev/google.golang.org/adk/v2/model) adapter for [ADK Go](https://pkg.go.dev/google.golang.org/adk/v2) (`google.golang.org/adk/v2`).
 
-- **Chat Completions**：`POST /v1/chat/completions`（默认）
-- **Responses API**：`POST /v1/responses`
+Built on the official [`openai-go`](https://github.com/openai/openai-go) client, this package lets ADK agents talk to OpenAI and any OpenAI-compatible endpoint (for example xAI, Ollama, or self-hosted gateways).
 
-可用于 OpenAI、xAI、Ollama 等 OpenAI 兼容端点。
+## Features
 
-## 安装
+- **Chat Completions** (`POST /v1/chat/completions`) — default
+- **Responses API** (`POST /v1/responses`)
+- Text generation (streaming and non-streaming)
+- Function tools with `*jsonschema.Schema` parameters
+- Image input via inline data URLs
+- JSON / JSON Schema structured output
+- Refusal mapping
+- Chat Completions streaming with `include_usage`
+
+## Requirements
+
+- Go 1.25+
+- An OpenAI-compatible API key and base URL
+
+## Installation
 
 ```bash
 go get github.com/civaapple-alt/adk-openai
 ```
 
-需要 Go 1.25+。
-
-## 快速开始
+## Quick start
 
 ```go
 package main
@@ -40,10 +52,10 @@ func main() {
 		option.WithBaseURL("https://api.x.ai/v1"),
 	)
 
-	// 默认 Chat Completions
+	// Default: Chat Completions
 	llm := adkopenai.New(client, "grok-4.5")
 
-	// 或使用 Responses API
+	// Or use the Responses API
 	// llm := adkopenai.New(client, "grok-4.5", adkopenai.WithAPIMode(adkopenai.APIModeResponses))
 
 	agent, err := llmagent.New(llmagent.Config{
@@ -51,50 +63,59 @@ func main() {
 		Model:       llm,
 		Instruction: "You are a helpful assistant.",
 	})
+	if err != nil {
+		panic(err)
+	}
 	_ = agent
-	_ = err
 	_ = context.Background()
 }
 ```
 
-## API 模式
+You own the `openai.Client` configuration (API key, base URL, HTTP options). This package only adapts that client to ADK's `model.LLM` interface.
 
-| 值 | 实际请求 |
-|---|---|
-| `chat_completions`（默认） | `/v1/chat/completions` |
-| `responses` | `/v1/responses` |
+## API modes
+
+| Mode | Constant | Endpoint |
+|---|---|---|
+| `chat_completions` (default) | `APIModeChatCompletions` | `/v1/chat/completions` |
+| `responses` | `APIModeResponses` | `/v1/responses` |
 
 ```go
 mode, err := adkopenai.ParseAPIMode("responses")
+if err != nil {
+	panic(err)
+}
 llm := adkopenai.New(client, "grok-4.5", adkopenai.WithAPIMode(mode))
 ```
 
-环境变量建议：
+`ParseAPIMode` accepts common aliases: `chat_completions`, `chat`, `completions`, `responses`, and `response`.
+
+## Configuration
+
+Suggested environment variables (as used by [`examples/hello`](examples/hello)):
 
 ```bash
-OPENAI_BASE_URL=https://api.x.ai/v1
-OPENAI_API_KEY=...
-OPENAI_MODEL=grok-4.5
-OPENAI_API_MODE=chat_completions   # 或 responses
+export OPENAI_BASE_URL=https://api.x.ai/v1
+export OPENAI_API_KEY=...
+export OPENAI_MODEL=grok-4.5
+export OPENAI_API_MODE=chat_completions   # or responses
 ```
 
-## 功能
+Run the example:
 
-- 文本生成（非流式 / 流式）
-- Function tools（含 `*jsonschema.Schema` 参数）
-- 图片输入（inline data URL）
-- JSON / JSON Schema 结构化输出
-- Refusal 映射
-- Chat Completions 流式 `include_usage`
+```bash
+go run ./examples/hello
+```
 
-## 本地开发
+## Local development
 
-若使用本地 ADK：
+If you develop against a local checkout of ADK Go, add a `replace` directive in `go.mod`:
 
 ```go
-// go.mod
-replace google.golang.org/adk/v2 => D:/gh-ws/adk-go
+replace google.golang.org/adk/v2 => /path/to/adk-go
 ```
+
+Then run tests:
 
 ```bash
 go test ./...
@@ -102,4 +123,4 @@ go test ./...
 
 ## License
 
-Apache-2.0
+Apache License 2.0. See [LICENSE](LICENSE).

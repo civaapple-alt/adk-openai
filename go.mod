@@ -40,6 +40,3 @@ require (
 	google.golang.org/grpc v1.81.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-// 本地已 clone 的 adk-go（ADK 2.0）。若只用官方模块，可删除下一行。
-replace google.golang.org/adk/v2 => D:/gh-ws/adk-go
