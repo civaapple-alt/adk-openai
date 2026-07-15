@@ -3,11 +3,15 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/civaapple-alt/adk-openai.svg)](https://pkg.go.dev/github.com/civaapple-alt/adk-openai)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-[English](README.md) | [简体中文](README.zh_CN.md)
-
 OpenAI-compatible [`model.LLM`](https://pkg.go.dev/google.golang.org/adk/v2/model) adapter for [ADK Go](https://pkg.go.dev/google.golang.org/adk/v2) (`google.golang.org/adk/v2`).
 
 Built on the official [`openai-go`](https://github.com/openai/openai-go) client, this package lets ADK agents talk to OpenAI and any OpenAI-compatible endpoint (for example xAI, Ollama, or self-hosted gateways).
+
+## Related projects
+
+For Anthropic Claude, see [adk-anthropic-go](https://github.com/Alcova-AI/adk-anthropic-go). It implements the same ADK Go `model.LLM` adapter pattern for Anthropic (direct API and Vertex AI), with a design approach closely aligned with this package. Provider-specific API behavior remains implemented independently.
+
+See the [development roadmap](ROADMAP.md) for planned compatibility, correctness, and feature work.
 
 ## Features
 
