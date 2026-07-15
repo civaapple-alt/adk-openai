@@ -14,8 +14,12 @@ import (
 )
 
 func toResponsesRequest(req *model.LLMRequest, modelName string) (responses.ResponseNewParams, error) {
-	if req.Model != "" {
-		modelName = req.Model
+	if req == nil {
+		return responses.ResponseNewParams{}, fmt.Errorf("LLMRequest is nil")
+	}
+	resolved, err := resolveModelName(req, modelName)
+	if err != nil {
+		return responses.ResponseNewParams{}, err
 	}
 
 	input, err := toResponsesInput(req)
@@ -24,7 +28,7 @@ func toResponsesRequest(req *model.LLMRequest, modelName string) (responses.Resp
 	}
 
 	out := responses.ResponseNewParams{
-		Model: modelName,
+		Model: resolved,
 		Input: responses.ResponseNewParamsInputUnion{
 			OfInputItemList: input,
 		},
@@ -93,6 +97,12 @@ func toResponsesRequest(req *model.LLMRequest, modelName string) (responses.Resp
 		out.Tools = tools
 	}
 
+	if choice, ok, err := responsesToolChoice(cfg.ToolConfig); err != nil {
+		return responses.ResponseNewParams{}, err
+	} else if ok {
+		out.ToolChoice = choice
+	}
+
 	return out, nil
 }
 
@@ -113,27 +123,55 @@ func toResponsesInputItems(content *genai.Content) ([]responses.ResponseInputIte
 		return nil, nil
 	}
 
+	role, err := roleToOpenAI(content.Role)
+	if err != nil {
+		return nil, err
+	}
+
 	var items []responses.ResponseInputItemUnionParam
-	skip := 0
-	for i, part := range content.Parts {
-		if part == nil || part.FunctionResponse == nil {
-			break
+	var pending []*genai.Part
+
+	flushPending := func() error {
+		if len(pending) == 0 {
+			return nil
 		}
-		raw, err := json.Marshal(part.FunctionResponse.Response)
+		built, err := buildResponsesItemsFromParts(role, pending)
 		if err != nil {
-			return nil, fmt.Errorf("marshal function response: %w", err)
+			return err
 		}
-		callID := part.FunctionResponse.ID
-		items = append(items, responses.ResponseInputItemParamOfFunctionCallOutput(callID, string(raw)))
-		skip = i + 1
+		items = append(items, built...)
+		pending = nil
+		return nil
 	}
 
-	parts := content.Parts[skip:]
-	if len(parts) == 0 {
-		return items, nil
+	for _, part := range content.Parts {
+		if part == nil {
+			continue
+		}
+		if part.FunctionResponse != nil {
+			if err := flushPending(); err != nil {
+				return nil, err
+			}
+			if part.FunctionResponse.ID == "" {
+				return nil, fmt.Errorf("FunctionResponse.ID is required for tool call correlation (function: %s)", part.FunctionResponse.Name)
+			}
+			raw, err := json.Marshal(part.FunctionResponse.Response)
+			if err != nil {
+				return nil, fmt.Errorf("marshal function response: %w", err)
+			}
+			items = append(items, responses.ResponseInputItemParamOfFunctionCallOutput(part.FunctionResponse.ID, string(raw)))
+			continue
+		}
+		pending = append(pending, part)
 	}
+	if err := flushPending(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 
-	role := roleToOpenAI(content.Role)
+func buildResponsesItemsFromParts(role string, parts []*genai.Part) ([]responses.ResponseInputItemUnionParam, error) {
+	var items []responses.ResponseInputItemUnionParam
 	var textBuf string
 	var contentParts responses.ResponseInputMessageContentListParam
 	var functionCalls []responses.ResponseInputItemUnionParam
@@ -184,7 +222,7 @@ func toResponsesInputItems(content *genai.Content) ([]responses.ResponseInputIte
 
 	if hasImage || len(contentParts) > 1 {
 		items = append(items, responses.ResponseInputItemParamOfMessage(contentParts, easyRole(role)))
-	} else if textBuf != "" || role == "user" || role == "system" || role == "assistant" {
+	} else if textBuf != "" || role == "user" || role == "system" || role == "assistant" || role == "developer" {
 		items = append(items, responses.ResponseInputItemParamOfMessage(textBuf, easyRole(role)))
 	}
 

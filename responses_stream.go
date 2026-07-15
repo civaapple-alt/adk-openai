@@ -10,9 +10,9 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-func (m *Model) generateResponsesStream(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+func (m *Model) generateResponsesStream(ctx context.Context, req *model.LLMRequest, modelName string) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		params, err := toResponsesRequest(req, m.modelName)
+		params, err := toResponsesRequest(req, modelName)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -24,9 +24,10 @@ func (m *Model) generateResponsesStream(ctx context.Context, req *model.LLMReque
 		aggregated := &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{}}
 		var finishReason genai.FinishReason
 		var usage *genai.GenerateContentResponseUsageMetadata
-		toolCalls := map[string]*toolCallBuilder{} // keyed by item_id
+		toolCalls := newOrderedToolCalls()
 		var refusalBuf string
 		lastPartIsText := false
+		var finalErrorCode, finalErrorMessage string
 
 		for stream.Next() {
 			event := stream.Current()
@@ -67,11 +68,7 @@ func (m *Model) generateResponsesStream(ctx context.Context, req *model.LLMReque
 					if id == "" {
 						id = event.Item.CallID
 					}
-					b, ok := toolCalls[id]
-					if !ok {
-						b = &toolCallBuilder{}
-						toolCalls[id] = b
-					}
+					b := toolCalls.get(id)
 					if event.Item.CallID != "" {
 						b.id = event.Item.CallID
 					}
@@ -85,22 +82,12 @@ func (m *Model) generateResponsesStream(ctx context.Context, req *model.LLMReque
 
 			case "response.function_call_arguments.delta":
 				lastPartIsText = false
-				id := event.ItemID
-				b, ok := toolCalls[id]
-				if !ok {
-					b = &toolCallBuilder{}
-					toolCalls[id] = b
-				}
+				b := toolCalls.get(event.ItemID)
 				b.args += event.Delta
 
 			case "response.function_call_arguments.done":
 				lastPartIsText = false
-				id := event.ItemID
-				b, ok := toolCalls[id]
-				if !ok {
-					b = &toolCallBuilder{}
-					toolCalls[id] = b
-				}
+				b := toolCalls.get(event.ItemID)
 				if event.Arguments != "" {
 					b.args = event.Arguments
 				}
@@ -108,11 +95,15 @@ func (m *Model) generateResponsesStream(ctx context.Context, req *model.LLMReque
 					b.name = event.Name
 				}
 
-			case "response.completed", "response.incomplete", "response.failed":
+			case "response.completed", "response.incomplete", "response.failed", "response.cancelled":
 				lastPartIsText = false
-				if event.Response.ID != "" {
+				if event.Response.ID != "" || event.Type == "response.failed" || event.Type == "response.cancelled" {
 					finishReason = convertResponsesFinishReason(&event.Response, refusalBuf != "")
 					usage = convertResponsesUsage(event.Response.Usage)
+					tmp := &model.LLMResponse{}
+					applyResponsesErrorFields(tmp, &event.Response)
+					finalErrorCode = tmp.ErrorCode
+					finalErrorMessage = tmp.ErrorMessage
 					// Prefer final response conversion when available.
 					if event.Type == "response.completed" || event.Type == "response.incomplete" {
 						if llmResp, convErr := convertResponsesResult(&event.Response); convErr == nil {
@@ -130,7 +121,28 @@ func (m *Model) generateResponsesStream(ctx context.Context, req *model.LLMReque
 							}
 							yield(llmResp, nil)
 							return
+						} else {
+							yield(nil, convErr)
+							return
 						}
+					}
+					if event.Type == "response.failed" || event.Type == "response.cancelled" {
+						llmResp := &model.LLMResponse{
+							Content:       aggregated,
+							UsageMetadata: usage,
+							FinishReason:  finishReason,
+							ErrorCode:     finalErrorCode,
+							ErrorMessage:  finalErrorMessage,
+							TurnComplete:  true,
+						}
+						if llmResp.ErrorCode == "" {
+							llmResp.ErrorCode = string(event.Response.Status)
+						}
+						if llmResp.ErrorMessage == "" {
+							llmResp.ErrorMessage = string(event.Response.Status)
+						}
+						yield(llmResp, nil)
+						return
 					}
 				}
 
@@ -147,28 +159,29 @@ func (m *Model) generateResponsesStream(ctx context.Context, req *model.LLMReque
 
 		if refusalBuf != "" {
 			aggregated.Parts = append(aggregated.Parts, &genai.Part{Text: refusalBuf})
-			if finishReason == "" || finishReason == genai.FinishReasonUnspecified {
-				finishReason = genai.FinishReasonSafety
-			}
+			finishReason = genai.FinishReasonSafety
 		}
 
-		for _, b := range toolCalls {
+		completed := append([]*genai.Part(nil), aggregated.Parts...)
+		for _, b := range toolCalls.builders() {
 			if b.name == "" && b.args == "" {
 				continue
 			}
-			aggregated.Parts = append(aggregated.Parts, &genai.Part{
-				FunctionCall: &genai.FunctionCall{
-					ID:   b.id,
-					Name: b.name,
-					Args: parseJSONArgs(b.args),
-				},
-			})
+			part, err := functionCallFromArgs(b.id, b.name, b.args, finishReason, completed)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			aggregated.Parts = append(aggregated.Parts, part)
+			completed = append(completed, part)
 		}
 
 		yield(&model.LLMResponse{
 			Content:       aggregated,
 			UsageMetadata: usage,
 			FinishReason:  finishReason,
+			ErrorCode:     finalErrorCode,
+			ErrorMessage:  finalErrorMessage,
 			Partial:       false,
 			TurnComplete:  true,
 		}, nil)

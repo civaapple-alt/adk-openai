@@ -11,9 +11,9 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-func (m *Model) generateChatStream(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+func (m *Model) generateChatStream(ctx context.Context, req *model.LLMRequest, modelName string) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		openaiReq, err := toChatRequest(req, m.modelName)
+		openaiReq, err := toChatRequest(req, modelName)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -100,9 +100,7 @@ func (m *Model) generateChatStream(ctx context.Context, req *model.LLMRequest) i
 
 		if refusalBuf != "" {
 			aggregated.Parts = append(aggregated.Parts, &genai.Part{Text: refusalBuf})
-			if finishReason == "" || finishReason == genai.FinishReasonUnspecified {
-				finishReason = genai.FinishReasonSafety
-			}
+			finishReason = genai.FinishReasonSafety
 		}
 
 		if len(toolCalls) > 0 {
@@ -111,15 +109,16 @@ func (m *Model) generateChatStream(ctx context.Context, req *model.LLMRequest) i
 				indices = append(indices, i)
 			}
 			sort.Ints(indices)
+			completed := append([]*genai.Part(nil), aggregated.Parts...)
 			for _, i := range indices {
 				b := toolCalls[i]
-				aggregated.Parts = append(aggregated.Parts, &genai.Part{
-					FunctionCall: &genai.FunctionCall{
-						ID:   b.id,
-						Name: b.name,
-						Args: parseJSONArgs(b.args),
-					},
-				})
+				part, err := functionCallFromArgs(b.id, b.name, b.args, finishReason, completed)
+				if err != nil {
+					yield(nil, err)
+					return
+				}
+				aggregated.Parts = append(aggregated.Parts, part)
+				completed = append(completed, part)
 			}
 		}
 

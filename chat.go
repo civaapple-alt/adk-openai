@@ -7,9 +7,9 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-func (m *Model) generateChat(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+func (m *Model) generateChat(ctx context.Context, req *model.LLMRequest, modelName string) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		openaiReq, err := toChatRequest(req, m.modelName)
+		openaiReq, err := toChatRequest(req, modelName)
 		if err != nil {
 			yield(nil, err)
 			return

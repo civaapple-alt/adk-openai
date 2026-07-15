@@ -92,16 +92,28 @@ func (m *Model) APIMode() APIMode { return m.apiMode }
 
 // GenerateContent implements model.LLM.
 func (m *Model) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
-	switch m.apiMode {
-	case APIModeResponses:
-		if stream {
-			return m.generateResponsesStream(ctx, req)
+	return func(yield func(*model.LLMResponse, error) bool) {
+		modelName, err := validateGenerateRequest(m.apiMode, req, m.modelName)
+		if err != nil {
+			yield(nil, err)
+			return
 		}
-		return m.generateResponses(ctx, req)
-	default:
-		if stream {
-			return m.generateChatStream(ctx, req)
+
+		switch m.apiMode {
+		case APIModeResponses:
+			if stream {
+				m.generateResponsesStream(ctx, req, modelName)(yield)
+				return
+			}
+			m.generateResponses(ctx, req, modelName)(yield)
+		case APIModeChatCompletions:
+			if stream {
+				m.generateChatStream(ctx, req, modelName)(yield)
+				return
+			}
+			m.generateChat(ctx, req, modelName)(yield)
+		default:
+			yield(nil, fmt.Errorf("unsupported API mode %q", m.apiMode))
 		}
-		return m.generateChat(ctx, req)
 	}
 }

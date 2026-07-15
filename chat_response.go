@@ -25,20 +25,22 @@ func convertChatResponse(resp *openai.ChatCompletion) (*model.LLMResponse, error
 		content.Parts = append(content.Parts, &genai.Part{Text: choice.Message.Refusal})
 	}
 
-	for _, tc := range choice.Message.ToolCalls {
-		fn := tc.AsFunction()
-		content.Parts = append(content.Parts, &genai.Part{
-			FunctionCall: &genai.FunctionCall{
-				ID:   fn.ID,
-				Name: fn.Function.Name,
-				Args: parseJSONArgs(fn.Function.Arguments),
-			},
-		})
+	finishReason := convertFinishReason(choice.FinishReason)
+	if choice.Message.Refusal != "" {
+		finishReason = genai.FinishReasonSafety
 	}
 
-	finishReason := convertFinishReason(choice.FinishReason)
-	if choice.Message.Refusal != "" && choice.FinishReason == "" {
-		finishReason = genai.FinishReasonSafety
+	completed := append([]*genai.Part(nil), content.Parts...)
+	for _, tc := range choice.Message.ToolCalls {
+		if tc.Type != "" && tc.Type != "function" {
+			continue
+		}
+		part, err := functionCallFromArgs(tc.ID, tc.Function.Name, tc.Function.Arguments, finishReason, completed)
+		if err != nil {
+			return nil, err
+		}
+		content.Parts = append(content.Parts, part)
+		completed = append(completed, part)
 	}
 
 	return &model.LLMResponse{

@@ -16,6 +16,10 @@ func convertResponsesResult(resp *responses.Response) (*model.LLMResponse, error
 
 	content := &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{}}
 	var refusal string
+	type pendingCall struct {
+		id, name, args string
+	}
+	var calls []pendingCall
 
 	for _, item := range resp.Output {
 		switch item.Type {
@@ -34,32 +38,40 @@ func convertResponsesResult(resp *responses.Response) (*model.LLMResponse, error
 				}
 			}
 		case "function_call":
-			fn := item.AsFunctionCall()
-			content.Parts = append(content.Parts, &genai.Part{
-				FunctionCall: &genai.FunctionCall{
-					ID:   fn.CallID,
-					Name: fn.Name,
-					Args: parseJSONArgs(fn.Arguments),
-				},
+			calls = append(calls, pendingCall{
+				id:   item.CallID,
+				name: item.Name,
+				args: item.Arguments.OfString,
 			})
 		}
 	}
 
 	// Fallback to SDK helper when typed output parsing finds no text.
-	if len(content.Parts) == 0 {
+	if len(content.Parts) == 0 && len(calls) == 0 {
 		if text := resp.OutputText(); text != "" {
 			content.Parts = append(content.Parts, &genai.Part{Text: text})
 		}
 	}
 
 	finishReason := convertResponsesFinishReason(resp, refusal != "")
+	completed := append([]*genai.Part(nil), content.Parts...)
+	for _, call := range calls {
+		part, err := functionCallFromArgs(call.id, call.name, call.args, finishReason, completed)
+		if err != nil {
+			return nil, err
+		}
+		content.Parts = append(content.Parts, part)
+		completed = append(completed, part)
+	}
 
-	return &model.LLMResponse{
+	llmResp := &model.LLMResponse{
 		Content:       content,
 		UsageMetadata: convertResponsesUsage(resp.Usage),
 		FinishReason:  finishReason,
 		TurnComplete:  true,
-	}, nil
+	}
+	applyResponsesErrorFields(llmResp, resp)
+	return llmResp, nil
 }
 
 func convertResponsesUsage(usage responses.ResponseUsage) *genai.GenerateContentResponseUsageMetadata {
@@ -93,5 +105,21 @@ func convertResponsesFinishReason(resp *responses.Response, refused bool) genai.
 		return genai.FinishReasonUnspecified
 	default:
 		return convertFinishReason(string(resp.Status))
+	}
+}
+
+func applyResponsesErrorFields(llmResp *model.LLMResponse, resp *responses.Response) {
+	switch string(resp.Status) {
+	case "failed", "cancelled":
+		code := string(resp.Status)
+		if resp.Error.Code != "" {
+			code = string(resp.Error.Code)
+		}
+		llmResp.ErrorCode = code
+		if resp.Error.Message != "" {
+			llmResp.ErrorMessage = resp.Error.Message
+		} else {
+			llmResp.ErrorMessage = string(resp.Status)
+		}
 	}
 }

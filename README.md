@@ -19,9 +19,12 @@ See the [development roadmap](ROADMAP.md) for planned compatibility, correctness
 - **Responses API** (`POST /v1/responses`)
 - Text generation (streaming and non-streaming)
 - Function tools with `*jsonschema.Schema` parameters
+- ADK `ToolConfig` mapping (`none` / `auto` / `required` / named function)
+- Mixed `FunctionResponse` history with required call IDs
+- Diagnostic errors for malformed or truncated tool arguments
 - Image input via inline data URLs
 - JSON / JSON Schema structured output
-- Refusal mapping
+- Refusal, failed, cancelled, and incomplete response mapping
 - Chat Completions streaming with `include_usage`
 
 ## Requirements

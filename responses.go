@@ -7,9 +7,9 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-func (m *Model) generateResponses(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+func (m *Model) generateResponses(ctx context.Context, req *model.LLMRequest, modelName string) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		params, err := toResponsesRequest(req, m.modelName)
+		params, err := toResponsesRequest(req, modelName)
 		if err != nil {
 			yield(nil, err)
 			return

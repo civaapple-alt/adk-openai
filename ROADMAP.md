@@ -12,6 +12,7 @@ keeping OpenAI and OpenAI-compatible API semantics independent.
 - Chat Completions and Responses API modes
 - Streaming and non-streaming text
 - Function tools, inline images, structured output, usage, and refusal mapping
+- P0 correctness work shipped in [v0.2.0](CHANGELOG.md#v020---p0-correctness-and-regression-coverage)
 
 The adapter already implements the current ADK `model.LLM` interface. Tracking
 newer ADK revisions is mainly a behavioral compatibility and testing concern,
@@ -27,43 +28,10 @@ not an interface migration blocker.
   Ollama, and self-hosted gateways can behave predictably.
 - Add regression tests before refactoring conversion code.
 
-## P0: Correctness and regression coverage
+## P0: Correctness and regression coverage — done in v0.2.0
 
-### Work
-
-- Add table-driven request and response conversion tests for both API modes.
-- Add fake HTTP/SSE tests for streaming, cancellation, early iterator exit,
-  refusals, failures, and multiple parallel tool calls.
-- Map ADK `ToolConfig` explicitly:
-  - `ModeNone` to `none`
-  - `ModeAuto` to `auto`
-  - `ModeAny` to `required`
-  - one allowed function to a provider-specific named function choice
-  - reject unsupported multi-function restrictions instead of relaxing them
-- Process `FunctionResponse` parts throughout mixed content, validate call IDs,
-  and preserve protocol-required message ordering.
-- Replace silent malformed tool argument fallback with diagnostic errors.
-  Distinguish invalid provider output from output truncated at a token limit.
-- Preserve Responses API tool-call order deterministically.
-- Correct `developer` role conversion and validate unknown roles, nil requests,
-  empty model names, and invalid API modes.
-- Map refusal, failed, cancelled, and incomplete responses to consistent ADK
-  finish and error fields.
-
-### Primary files
-
-- `model.go`
-- `chat_request.go`, `chat_response.go`, `chat_stream.go`
-- `responses_request.go`, `responses_response.go`, `responses_stream.go`
-- `util.go`
-- New request, response, streaming, and integration test files
-
-### Exit criteria
-
-- Chat and Responses modes pass the same core behavioral test matrix.
-- No malformed tool call can be executed as an accidental empty argument map.
-- Parallel tool-call order is stable across repeated test runs.
-- `go test ./...`, `go test -race ./...`, and `go vet ./...` pass.
+Completed. See [CHANGELOG.md](CHANGELOG.md) for the shipped behavior. Remaining
+work continues in P1–P4 below.
 
 ## P1: ADK response semantics and endpoint capabilities
 

@@ -27,6 +27,31 @@ func TestConvertChatResponseHandlesRefusal(t *testing.T) {
 	if got.UsageMetadata == nil || got.UsageMetadata.TotalTokenCount != 3 {
 		t.Fatalf("usage = %#v", got.UsageMetadata)
 	}
+	if got.FinishReason != genai.FinishReasonSafety {
+		t.Fatalf("finish = %v, want Safety", got.FinishReason)
+	}
+}
+
+func TestConvertChatResponseInvalidToolArgs(t *testing.T) {
+	resp := &openai.ChatCompletion{
+		Choices: []openai.ChatCompletionChoice{{
+			Message: openai.ChatCompletionMessage{
+				ToolCalls: []openai.ChatCompletionMessageToolCallUnion{{
+					ID:   "c1",
+					Type: "function",
+					Function: openai.ChatCompletionMessageFunctionToolCallFunction{
+						Name:      "lookup",
+						Arguments: `{`,
+					},
+				}},
+			},
+			FinishReason: "stop",
+		}},
+	}
+	_, err := convertChatResponse(resp)
+	if err == nil {
+		t.Fatal("expected error")
+	}
 }
 
 func TestConvertFinishReason(t *testing.T) {

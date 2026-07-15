@@ -13,8 +13,12 @@ import (
 )
 
 func toChatRequest(req *model.LLMRequest, modelName string) (openai.ChatCompletionNewParams, error) {
-	if req.Model != "" {
-		modelName = req.Model
+	if req == nil {
+		return openai.ChatCompletionNewParams{}, fmt.Errorf("LLMRequest is nil")
+	}
+	resolved, err := resolveModelName(req, modelName)
+	if err != nil {
+		return openai.ChatCompletionNewParams{}, err
 	}
 
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Contents)+1)
@@ -27,7 +31,7 @@ func toChatRequest(req *model.LLMRequest, modelName string) (openai.ChatCompleti
 	}
 
 	out := openai.ChatCompletionNewParams{
-		Model:    modelName,
+		Model:    resolved,
 		Messages: messages,
 	}
 
@@ -88,6 +92,12 @@ func toChatRequest(req *model.LLMRequest, modelName string) (openai.ChatCompleti
 		out.Tools = tools
 	}
 
+	if choice, ok, err := chatToolChoice(cfg.ToolConfig); err != nil {
+		return openai.ChatCompletionNewParams{}, err
+	} else if ok {
+		out.ToolChoice = choice
+	}
+
 	return out, nil
 }
 
@@ -96,27 +106,54 @@ func toChatMessages(content *genai.Content) ([]openai.ChatCompletionMessageParam
 		return nil, nil
 	}
 
-	var toolMsgs []openai.ChatCompletionMessageParamUnion
-	skip := 0
-	for i, part := range content.Parts {
-		if part == nil || part.FunctionResponse == nil {
-			break
+	role, err := roleToOpenAI(content.Role)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []openai.ChatCompletionMessageParamUnion
+	var pending []*genai.Part
+
+	flushPending := func() error {
+		if len(pending) == 0 {
+			return nil
 		}
-		raw, err := json.Marshal(part.FunctionResponse.Response)
+		msg, err := buildChatMessageFromParts(role, pending)
 		if err != nil {
-			return nil, fmt.Errorf("marshal function response: %w", err)
+			return err
 		}
-		toolMsgs = append(toolMsgs, openai.ToolMessage(string(raw), part.FunctionResponse.ID))
-		skip = i + 1
+		out = append(out, msg)
+		pending = nil
+		return nil
 	}
 
-	parts := content.Parts[skip:]
-	if len(parts) == 0 {
-		return toolMsgs, nil
+	for _, part := range content.Parts {
+		if part == nil {
+			continue
+		}
+		if part.FunctionResponse != nil {
+			if err := flushPending(); err != nil {
+				return nil, err
+			}
+			if part.FunctionResponse.ID == "" {
+				return nil, fmt.Errorf("FunctionResponse.ID is required for tool call correlation (function: %s)", part.FunctionResponse.Name)
+			}
+			raw, err := json.Marshal(part.FunctionResponse.Response)
+			if err != nil {
+				return nil, fmt.Errorf("marshal function response: %w", err)
+			}
+			out = append(out, openai.ToolMessage(string(raw), part.FunctionResponse.ID))
+			continue
+		}
+		pending = append(pending, part)
 	}
+	if err := flushPending(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
-	role := roleToOpenAI(content.Role)
-
+func buildChatMessageFromParts(role string, parts []*genai.Part) (openai.ChatCompletionMessageParamUnion, error) {
 	var textBuf string
 	var userParts []openai.ChatCompletionContentPartUnionParam
 	var assistantParts []openai.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion
@@ -136,7 +173,7 @@ func toChatMessages(content *genai.Content) ([]openai.ChatCompletionMessageParam
 		if part.FunctionCall != nil {
 			args, err := json.Marshal(part.FunctionCall.Args)
 			if err != nil {
-				return nil, fmt.Errorf("marshal function args: %w", err)
+				return openai.ChatCompletionMessageParamUnion{}, fmt.Errorf("marshal function args: %w", err)
 			}
 			toolCalls = append(toolCalls, openai.ChatCompletionMessageToolCallUnionParam{
 				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
@@ -158,13 +195,12 @@ func toChatMessages(content *genai.Content) ([]openai.ChatCompletionMessageParam
 					Detail: "auto",
 				}))
 			default:
-				return nil, fmt.Errorf("unsupported inline MIME type: %s", mt)
+				return openai.ChatCompletionMessageParamUnion{}, fmt.Errorf("unsupported inline MIME type: %s", mt)
 			}
 		}
 	}
 
-	msg := buildChatMessageForRole(role, textBuf, userParts, assistantParts, toolCalls)
-	return append(toolMsgs, msg), nil
+	return buildChatMessageForRole(role, textBuf, userParts, assistantParts, toolCalls), nil
 }
 
 func buildChatMessageForRole(
